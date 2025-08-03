@@ -23,10 +23,9 @@ import { ErrorService } from "./services/error/ErrorService"
 import { Logger } from "./services/logging/Logger"
 import { posthogClientProvider } from "./services/posthog/PostHogClientProvider"
 import { telemetryService } from "./services/posthog/telemetry/TelemetryService"
-import { cleanupTestMode, initializeTestMode } from "./services/test/TestMode"
 import { WebviewProviderType } from "./shared/webview/types"
 import "./utils/path" // necessary to have access to String.prototype.toPosix
-
+import { createPlanActTestServer, shutdownPlanActTestServer } from "./services/test/PlanActTestServer"
 import { HostProvider } from "@/hosts/host-provider"
 import { vscodeHostBridgeClient } from "@/hosts/vscode/hostbridge/client/host-grpc-client"
 import { readTextFromClipboard, writeTextToClipboard } from "@/utils/env"
@@ -38,7 +37,6 @@ import { VscodeWebviewProvider } from "./hosts/vscode/VscodeWebviewProvider"
 import { GitCommitGenerator } from "./integrations/git/commit-message-generator"
 import { AuthService } from "./services/auth/AuthService"
 import { ShowMessageType } from "./shared/proto/host/window"
-import { SharedUriHandler } from "./services/uri/SharedUriHandler"
 /*
 Built using https://github.com/microsoft/vscode-webview-ui-toolkit
 
@@ -73,9 +71,9 @@ export async function activate(context: vscode.ExtensionContext) {
 	const previousVersion = context.globalState.get<string>("clineVersion")
 	const sidebarWebview = HostProvider.get().createWebviewProvider(WebviewProviderType.SIDEBAR)
 
-	const testModeWatchers = await initializeTestMode(sidebarWebview)
-	// Initialize test mode and add disposables to context
-	context.subscriptions.push(...testModeWatchers)
+	// Initialize PlanActTestServer and add disposables to context
+	const planActTestServer = createPlanActTestServer(sidebarWebview)
+	context.subscriptions.push(new vscode.Disposable(() => planActTestServer.close()))
 
 	vscode.commands.executeCommand("setContext", "cline.isDevMode", IS_DEV && IS_DEV === "true")
 
@@ -266,10 +264,44 @@ export async function activate(context: vscode.ExtensionContext) {
 	})()
 	context.subscriptions.push(vscode.workspace.registerTextDocumentContentProvider(DIFF_VIEW_URI_SCHEME, diffContentProvider))
 
+	// URI Handler
 	const handleUri = async (uri: vscode.Uri) => {
-		const success = await SharedUriHandler.handleUri(uri)
-		if (!success) {
-			console.warn("Extension URI handler: Failed to process URI:", uri.toString())
+		console.log("URI Handler called with:", {
+			path: uri.path,
+			query: uri.query,
+			scheme: uri.scheme,
+		})
+
+		const path = uri.path
+		const query = new URLSearchParams(uri.query.replace(/\+/g, "%2B"))
+		const visibleWebview = WebviewProvider.getVisibleInstance()
+		if (!visibleWebview) {
+			return
+		}
+		switch (path) {
+			case "/openrouter": {
+				const code = query.get("code")
+				if (code) {
+					await visibleWebview?.controller.handleOpenRouterCallback(code)
+				}
+				break
+			}
+			case "/auth": {
+				console.log("Auth callback received:", uri.toString())
+
+				const token = query.get("idToken")
+				const provider = query.get("provider")
+
+				console.log("Auth callback received:", { provider })
+
+				if (token) {
+					await visibleWebview?.controller.handleAuthCallback(token, provider)
+					// await authService.handleAuthCallback(token)
+				}
+				break
+			}
+			default:
+				break
 		}
 	}
 	context.subscriptions.push(vscode.window.registerUriHandler({ handleUri }))
@@ -631,10 +663,7 @@ export async function activate(context: vscode.ExtensionContext) {
 			if (event.key === "clineAccountId") {
 				// Check if the secret was removed (logout) or added/updated (login)
 				const secretValue = await context.secrets.get("clineAccountId")
-				const activeWebviewProvider = WebviewProvider.getVisibleInstance()
-				const controller = activeWebviewProvider?.controller
-
-				const authService = AuthService.getInstance(controller)
+				const authService = AuthService.getInstance(context)
 				if (secretValue) {
 					// Secret was added or updated - restore auth info (login from another window)
 					authService?.restoreRefreshTokenAndRetrieveAuthInfo()
@@ -675,8 +704,8 @@ export async function deactivate() {
 	// Dispose all webview instances
 	await WebviewProvider.disposeAllInstances()
 
-	// Clean up test mode
-	cleanupTestMode()
+	// Shut down PlanActTestServer
+	shutdownPlanActTestServer()
 	await posthogClientProvider.shutdown()
 
 	Logger.log("Cline extension deactivated")
