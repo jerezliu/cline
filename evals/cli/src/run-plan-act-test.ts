@@ -11,8 +11,13 @@ program
 	.option("-k, --api-key <string>", "The API key for Cline")
 	.option("-w, --workspace <string>", "The workspace path for the test")
 	.option("-r, --results-filename <string>", "The filename for the results JSON file")
+	.option(
+		"--blind-approval-wait-seconds <number>",
+		"The number of seconds to wait before automatically approving a tool call",
+	)
+	.option("--timeout-minutes <number>", "The overall timeout in minutes for the task", "15")
 	.action(async (options) => {
-		const { task, apiKey, workspace, resultsFilename } = options
+		const { task, apiKey, workspace, resultsFilename, blindApprovalWaitSeconds, timeoutMinutes } = options
 
 		if (!task) {
 			console.error("Error: --task is required.")
@@ -40,14 +45,21 @@ program
 			}
 
 			// Send the task to the test server
+			const requestBody: { task: string; apiKey?: string; waitSeconds?: number } = { task }
+			if (apiKey) {
+				requestBody.apiKey = apiKey
+			}
+			if (blindApprovalWaitSeconds) {
+				requestBody.waitSeconds = parseInt(blindApprovalWaitSeconds, 10)
+			}
 			const response = await axios.post(
 				`${serverUrl}/task`,
-				{ task, apiKey },
+				requestBody,
 				{
 					headers: {
 						"Content-Type": "application/json",
 					},
-					timeout: 15 * 60 * 1000, // 15 minutes timeout for the request
+					timeout: parseInt(timeoutMinutes, 10) * 60 * 1000,
 				},
 			)
 
@@ -91,6 +103,7 @@ program
 		} catch (error) {
 			if (axios.isAxiosError(error)) {
 				console.error(`Error communicating with Cline PlanActTestServer: ${error.message}`)
+				console.error(`Did you properly set vscode work directory?`)
 				if (error.response) {
 					console.error("Server responded with:", JSON.stringify(error.response.data, null, 2))
 				}
