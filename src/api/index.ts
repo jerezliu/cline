@@ -131,6 +131,8 @@ function createHandlerForProvider(
 					mode === "plan" ? options.planModeThinkingBudgetTokens : options.actModeThinkingBudgetTokens,
 				apiModelId: mode === "plan" ? options.planModeApiModelId : options.actModeApiModelId,
 				taskId: options.taskId,
+				onRawRequest: options.onRawRequest,
+				onRawResponse: options.onRawResponse,
 			})
 		case "openai-native":
 			return new OpenAiNativeHandler({

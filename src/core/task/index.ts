@@ -36,9 +36,9 @@ import pWaitFor from "p-wait-for"
 import * as path from "path"
 import * as vscode from "vscode"
 
-import { HostProvider } from "@/hosts/host-provider"
-import { ClineErrorType } from "@/services/error/ClineError"
-import { ErrorService } from "@/services/error/ErrorService"
+import { HostProvider } from "../../hosts/host-provider"
+import { ClineErrorType } from "../../services/error/ClineError"
+import { ErrorService } from "../../services/error/ErrorService"
 import { parseAssistantMessageV2, parseAssistantMessageV3, ToolUseName } from "@core/assistant-message"
 import {
 	checkIsAnthropicContextWindowError,
@@ -87,7 +87,7 @@ import { ToolExecutor } from "./ToolExecutor"
 import { updateApiReqMsg } from "./utils"
 import { CacheService } from "../storage/CacheService"
 import { Mode, OpenaiReasoningEffort } from "@shared/storage/types"
-import { ShowMessageType } from "@/shared/proto/index.host"
+import { ShowMessageType } from "../../shared/proto/index.host"
 
 export const USE_EXPERIMENTAL_CLAUDE4_FEATURES = false
 
@@ -130,6 +130,8 @@ export class Task {
 	private postStateToWebview: () => Promise<void>
 	private reinitExistingTaskFromId: (taskId: string) => Promise<void>
 	private cancelTask: () => Promise<void>
+	private onRawModelResponse?: (request: any, response: string) => void
+	fullRequestForCallback: any
 
 	// Cache service
 	private cacheService: CacheService
@@ -151,6 +153,7 @@ export class Task {
 		postStateToWebview: () => Promise<void>,
 		reinitExistingTaskFromId: (taskId: string) => Promise<void>,
 		cancelTask: () => Promise<void>,
+		onRawModelResponse: ((request: any, response: string) => void) | undefined,
 		apiConfiguration: ApiConfiguration,
 		autoApprovalSettings: AutoApprovalSettings,
 		browserSettings: BrowserSettings,
@@ -177,6 +180,7 @@ export class Task {
 		this.postStateToWebview = postStateToWebview
 		this.reinitExistingTaskFromId = reinitExistingTaskFromId
 		this.cancelTask = cancelTask
+		this.onRawModelResponse = onRawModelResponse
 		this.clineIgnoreController = new ClineIgnoreController(cwd)
 
 		// TODO(ae) this is a hack to replace the terminal manager for standalone,
@@ -286,6 +290,18 @@ export class Task {
 				effectiveApiConfiguration.planModeReasoningEffort = this.openaiReasoningEffort
 			} else {
 				effectiveApiConfiguration.actModeReasoningEffort = this.openaiReasoningEffort
+			}
+		}
+
+		if (this.onRawModelResponse) {
+			effectiveApiConfiguration.onRawRequest = (request) => {
+				this.fullRequestForCallback = request
+			}
+			effectiveApiConfiguration.onRawResponse = (response) => {
+				if (this.onRawModelResponse) {
+					Logger.log(`[Task] onRawResponse called with response: ${JSON.stringify(response)}`)
+					this.onRawModelResponse(this.fullRequestForCallback, response)
+				}
 			}
 		}
 
@@ -2477,7 +2493,6 @@ export class Task {
 					})
 					this.taskState.consecutiveMistakeCount++
 				}
-
 				const recDidEndLoop = await this.recursivelyMakeClineRequests(this.taskState.userMessageContent)
 				didEndLoop = recDidEndLoop
 			} else {

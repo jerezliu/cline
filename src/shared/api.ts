@@ -95,6 +95,8 @@ export interface ApiHandlerOptions {
 	sapAiCoreBaseUrl?: string
 	huaweiCloudMaasApiKey?: string
 	onRetryAttempt?: (attempt: number, maxRetries: number, delay: number, error: any) => void
+	onRawRequest?: (request: any) => void
+	onRawResponse?: (response: any) => void
 	// Plan mode configurations
 	planModeApiModelId?: string
 	planModeThinkingBudgetTokens?: number

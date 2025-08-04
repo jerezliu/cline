@@ -316,7 +316,14 @@ export function createPlanActTestServer(webviewProvider?: WebviewProvider): http
 					const taskStartTime = Date.now()
 
 					// Initiate the new task
-					const result = await visibleWebview.controller.initTask(task)
+					await visibleWebview.controller.initTask(task, undefined, undefined, undefined, (request, response) => {
+						if (visibleWebview.controller?.rawModelResponse) {
+							const newLength = visibleWebview.controller.rawModelResponse.push({ request, response })
+							Logger.log(
+								`[PlanActTestServer] rawModelResponse updated. New length: ${newLength}. Added response: ${JSON.stringify(response)}`,
+							)
+						}
+					})
 
 					// Start the blind approval interval
 					blindApprovalInterval = startBlindApprovalInterval(visibleWebview, waitSeconds)
@@ -324,26 +331,21 @@ export function createPlanActTestServer(webviewProvider?: WebviewProvider): http
 					// Try to get the task ID directly from the result or from the state
 					let taskId: string | undefined
 
-					if (typeof result === "string") {
-						// If initTask returns the task ID directly
-						taskId = result
-					} else {
-						// Wait a moment for the state to update
-						await new Promise((resolve) => setTimeout(resolve, 1000))
+					// Wait a moment for the state to update
+					await new Promise((resolve) => setTimeout(resolve, 1000))
 
-						// Try to get the task ID from the controller's state
-						const state = await visibleWebview.controller.getStateToPostToWebview()
-						taskId = state.currentTaskItem?.id
+					// Try to get the task ID from the controller's state
+					const state = await visibleWebview.controller.getStateToPostToWebview()
+					taskId = state.currentTaskItem?.id
 
-						// If still not found, try polling a few times
-						if (!taskId) {
-							for (let i = 0; i < 5; i++) {
-								await new Promise((resolve) => setTimeout(resolve, 500))
-								const updatedState = await visibleWebview.controller.getStateToPostToWebview()
-								taskId = updatedState.currentTaskItem?.id
-								if (taskId) {
-									break
-								}
+					// If still not found, try polling a few times
+					if (!taskId) {
+						for (let i = 0; i < 5; i++) {
+							await new Promise((resolve) => setTimeout(resolve, 500))
+							const updatedState = await visibleWebview.controller.getStateToPostToWebview()
+							taskId = updatedState.currentTaskItem?.id
+							if (taskId) {
+								break
 							}
 						}
 					}
@@ -453,6 +455,18 @@ export function createPlanActTestServer(webviewProvider?: WebviewProvider): http
 						// Calculate task duration
 						const taskDuration = Date.now() - taskStartTime
 
+						// Log the final rawModelResponse before sending
+						Logger.log(
+							`[PlanActTestServer] Final rawModelResponse length: ${
+								visibleWebview.controller.rawModelResponse?.length ?? 0
+							}`,
+						)
+						Logger.log(
+							`[PlanActTestServer] Final rawModelResponse content: ${JSON.stringify(
+								visibleWebview.controller.rawModelResponse,
+							)}`,
+						)
+
 						// Return comprehensive response with all metrics and data
 						res.writeHead(200, { "Content-Type": "application/json" })
 						res.end(
@@ -470,6 +484,7 @@ export function createPlanActTestServer(webviewProvider?: WebviewProvider): http
 								messages,
 								apiConversationHistory,
 								files: fileChanges,
+								rawModelResponse: visibleWebview.controller.rawModelResponse,
 							}),
 						)
 					} catch (timeoutError) {

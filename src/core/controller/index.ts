@@ -50,6 +50,8 @@ export class Controller {
 
 	private disposables: vscode.Disposable[] = []
 	task?: Task
+	onRawModelResponse?: (request: Anthropic.Messages.MessageParam[], response: string) => void
+	rawModelResponse?: { request: any; response: string }[]
 
 	workspaceTracker: WorkspaceTracker
 	mcpHub: McpHub
@@ -161,12 +163,21 @@ export class Controller {
 		await updateGlobalState(this.context, "userInfo", info)
 	}
 
-	async initTask(task?: string, images?: string[], files?: string[], historyItem?: HistoryItem) {
+	async initTask(
+		task?: string,
+		images?: string[],
+		files?: string[],
+		historyItem?: HistoryItem,
+		onRawModelResponse?: (request: Anthropic.Messages.MessageParam[], response: string) => void,
+	) {
 		await this.clearTask() // ensures that an existing task doesn't exist before starting a new one, although this shouldn't be possible since user must clear task before starting a new one
+		this.onRawModelResponse = onRawModelResponse
+		if (onRawModelResponse && !this.rawModelResponse) {
+			this.rawModelResponse = []
+		}
 
 		// Get API configuration from cache for immediate access
 		const apiConfiguration = this.cacheService.getApiConfiguration()
-
 		const {
 			autoApprovalSettings,
 			browserSettings,
@@ -205,6 +216,7 @@ export class Controller {
 			() => this.postStateToWebview(),
 			(taskId) => this.reinitExistingTaskFromId(taskId),
 			() => this.cancelTask(),
+			onRawModelResponse,
 			apiConfiguration,
 			autoApprovalSettings,
 			browserSettings,
@@ -228,7 +240,7 @@ export class Controller {
 	async reinitExistingTaskFromId(taskId: string) {
 		const history = await this.getTaskWithId(taskId)
 		if (history) {
-			await this.initTask(undefined, undefined, undefined, history.historyItem)
+			await this.initTask(undefined, undefined, undefined, history.historyItem, this.onRawModelResponse)
 		}
 	}
 
@@ -286,7 +298,21 @@ export class Controller {
 		// Update API handler with new mode (buildApiHandler now selects provider based on mode)
 		if (this.task) {
 			const apiConfiguration = this.cacheService.getApiConfiguration()
-			this.task.api = buildApiHandler({ ...apiConfiguration, taskId: this.task.taskId }, modeToSwitchTo)
+			const effectiveApiConfiguration = {
+				...apiConfiguration,
+				taskId: this.task.taskId,
+				onRawRequest: (request: any) => {
+					if (this.onRawModelResponse && this.task) {
+						this.task.fullRequestForCallback = request
+					}
+				},
+				onRawResponse: (response: any) => {
+					if (this.onRawModelResponse && this.task) {
+						this.onRawModelResponse(this.task.fullRequestForCallback, response)
+					}
+				},
+			}
+			this.task.api = buildApiHandler(effectiveApiConfiguration, modeToSwitchTo)
 		}
 
 		await this.postStateToWebview()
@@ -337,7 +363,7 @@ export class Controller {
 				// 'abandoned' will prevent this cline instance from affecting future cline instance gui. this may happen if its hanging on a streaming request
 				this.task.taskState.abandoned = true
 			}
-			await this.initTask(undefined, undefined, undefined, historyItem) // clears task again, so we need to abortTask manually above
+			await this.initTask(undefined, undefined, undefined, historyItem, this.onRawModelResponse) // clears task again, so we need to abortTask manually above
 			// await this.postStateToWebview() // new Cline instance will post state when it's ready. having this here sent an empty messages array to webview leading to virtuoso having to reload the entire list
 		}
 	}

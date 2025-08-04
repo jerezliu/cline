@@ -21,6 +21,8 @@ interface GeminiHandlerOptions {
 	thinkingBudgetTokens?: number
 	apiModelId?: string
 	taskId?: string
+	onRawRequest?: (request: any) => void
+	onRawResponse?: (response: any) => void
 }
 
 /**
@@ -128,6 +130,15 @@ export class GeminiHandler implements ApiHandler {
 		}
 
 		// Generate content using the configured parameters
+		if (this.options.onRawRequest) {
+			this.options.onRawRequest({
+				model: modelId,
+				contents: contents,
+				config: {
+					...requestConfig,
+				},
+			})
+		}
 		const sdkCallStartTime = Date.now()
 		let sdkFirstChunkTime: number | undefined
 		let ttftSdkMs: number | undefined
@@ -149,6 +160,7 @@ export class GeminiHandler implements ApiHandler {
 			})
 
 			let isFirstSdkChunk = true
+			let fullTextResponse = ""
 			for await (const chunk of result) {
 				if (isFirstSdkChunk) {
 					sdkFirstChunkTime = Date.now()
@@ -182,6 +194,7 @@ export class GeminiHandler implements ApiHandler {
 				}
 
 				if (chunk.text) {
+					fullTextResponse += chunk.text
 					yield {
 						type: "text",
 						text: chunk.text,
@@ -197,6 +210,10 @@ export class GeminiHandler implements ApiHandler {
 				}
 			}
 			apiSuccess = true
+
+			if (this.options.onRawResponse) {
+				this.options.onRawResponse(fullTextResponse)
+			}
 
 			if (lastUsageMetadata) {
 				const totalCost = this.calculateCost({
