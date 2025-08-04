@@ -45,49 +45,27 @@ program
 			}
 
 			// Send the task to the test server
-			const requestBody: { task: string; apiKey?: string; waitSeconds?: number } = { task }
+			const requestBody: { task: string; apiKey?: string; waitSeconds?: number; resultsFilename?: string } = {
+				task,
+			}
 			if (apiKey) {
 				requestBody.apiKey = apiKey
 			}
 			if (blindApprovalWaitSeconds) {
 				requestBody.waitSeconds = parseInt(blindApprovalWaitSeconds, 10)
 			}
-			const response = await axios.post(
-				`${serverUrl}/task`,
-				requestBody,
-				{
-					headers: {
-						"Content-Type": "application/json",
-					},
-					timeout: parseInt(timeoutMinutes, 10) * 60 * 1000,
+			if (resultsFilename) {
+				requestBody.resultsFilename = resultsFilename
+			}
+			const response = await axios.post(`${serverUrl}/task`, requestBody, {
+				headers: {
+					"Content-Type": "application/json",
 				},
-			)
+				timeout: parseInt(timeoutMinutes, 10) * 60 * 1000,
+			})
 
-			// console.log("Cline PlanActTestServer response:")
-			// console.log(JSON.stringify(response.data, null, 2))
-
-			// Save the response to the workspace
-			try {
-				const resultsDir = path.join(workspace, "results")
-				if (!fs.existsSync(resultsDir)) {
-					fs.mkdirSync(resultsDir, { recursive: true })
-				}
-
-				let outputFilename: string
-				if (resultsFilename) {
-					outputFilename = resultsFilename.endsWith(".json") ? resultsFilename : `${resultsFilename}.json`
-				} else {
-					// Sanitize the task to create a valid filename
-					const sanitizedTask = task.replace(/[^a-z0-9]/gi, "_").toLowerCase()
-					const timestamp = new Date().toISOString().replace(/[:.]/g, "-")
-					outputFilename = `${sanitizedTask.substring(0, 50)}_${timestamp}.json`
-				}
-				const resultsPath = path.join(resultsDir, outputFilename)
-
-				fs.writeFileSync(resultsPath, JSON.stringify(response.data, null, 2))
-				console.log(`Results saved to: ${resultsPath}`)
-			} catch (saveError) {
-				console.error(`Error saving results to workspace: ${saveError}`)
+			if (response.data.resultsPath) {
+				console.log(`Results saved to: ${response.data.resultsPath}`)
 			}
 
 			if (response.data.success && response.data.completed) {
