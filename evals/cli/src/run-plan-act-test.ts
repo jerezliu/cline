@@ -63,8 +63,8 @@ program
 				},
 			)
 
-			console.log("Cline PlanActTestServer response:")
-			console.log(JSON.stringify(response.data, null, 2))
+			// console.log("Cline PlanActTestServer response:")
+			// console.log(JSON.stringify(response.data, null, 2))
 
 			// Save the response to the workspace
 			try {
