@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.20.9
+
+### Patch Changes
+
+- 7620f17: Clear errors from UI when retrying current task
+- 1c026c2: Fix input box positioning issue in chat view.
+
 ## [3.20.8]
 
 - Add navbar tooltips on hover
