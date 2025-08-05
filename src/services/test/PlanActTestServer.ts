@@ -9,12 +9,74 @@ import { AutoApprovalSettings } from "@shared/AutoApprovalSettings"
 import { TaskServiceClient } from "webview-ui/src/services/grpc-client"
 import { validateWorkspacePath, initializeGitRepository, getFileChanges, calculateToolSuccessRate } from "./GitHelper"
 import { updateGlobalState, getAllExtensionState, storeSecret } from "@core/storage/state"
+import { SecretKey } from "@core/storage/state-keys"
 import { ClineAsk, ExtensionMessage, ClineMessage } from "@shared/ExtensionMessage"
 import { ApiProvider } from "@shared/api"
 import { HistoryItem } from "@shared/HistoryItem"
 import { getSavedClineMessages, getSavedApiConversationHistory } from "@core/storage/disk"
 import { AskResponseRequest } from "@shared/proto/cline/task"
 import { getCwd } from "@/utils/path"
+
+/**
+ * Sets the initial Cline configuration to bypass the first-use walkthrough.
+ * This function configures API settings, checkpoints, and marks the walkthrough as complete.
+ * @param context The VSCode extension context.
+ * @param config The configuration to set, including API key, provider, and checkpoint preference.
+ */
+async function setInitialConfig(
+	context: vscode.ExtensionContext,
+	config: { apiKey: string; apiProvider: ApiProvider; enableCheckpoints: boolean },
+) {
+	Logger.log("[PlanActTestServer] Setting initial configuration to bypass walkthrough...")
+
+	// 1. Set API Provider and Key dynamically
+	const { apiConfiguration } = await getAllExtensionState(context)
+
+	const getApiKeyField = (provider: ApiProvider): SecretKey => {
+		const providerKeyMap: Partial<Record<ApiProvider, SecretKey>> = {
+			gemini: "geminiApiKey",
+			anthropic: "apiKey", // Note: Anthropic uses the generic 'apiKey'
+			openai: "openAiApiKey",
+			openrouter: "openRouterApiKey",
+		}
+		const key = providerKeyMap[provider]
+		if (key) {
+			return key
+		}
+		throw new Error(`[PlanActTestServer] Unsupported API provider for key mapping: ${provider}`)
+	}
+
+	const apiKeyField = getApiKeyField(config.apiProvider)
+
+	const updatedApiConfig = {
+		...apiConfiguration,
+		apiProvider: config.apiProvider,
+		planModeApiProvider: config.apiProvider,
+		actModeApiProvider: config.apiProvider,
+		[apiKeyField]: config.apiKey,
+	}
+
+	await storeSecret(context, apiKeyField, config.apiKey)
+	await updateGlobalState(context, "planModeApiProvider", config.apiProvider)
+	await updateGlobalState(context, "actModeApiProvider", config.apiProvider)
+	Logger.log(`[PlanActTestServer] API configuration set for provider: ${config.apiProvider}`)
+
+	// 2. Set Checkpoint settings
+	await updateGlobalState(context, "enableCheckpointsSetting", config.enableCheckpoints)
+	Logger.log(`[PlanActTestServer] Checkpoint settings 'enabled' set to: ${config.enableCheckpoints}`)
+
+	// 3. Bypass the first-use walkthrough
+	await updateGlobalState(context, "welcomeViewCompleted", true)
+	Logger.log("[PlanActTestServer] First-use walkthrough bypassed.")
+
+	// 4. Refresh the webview state to apply the changes
+	const visibleWebview = WebviewProvider.getVisibleInstance()
+	if (visibleWebview?.controller) {
+		visibleWebview.controller.cacheService.setApiConfiguration(updatedApiConfig)
+		await visibleWebview.controller.postStateToWebview()
+		Logger.log("[PlanActTestServer] Webview state updated with new configuration.")
+	}
+}
 
 /**
  * Creates a tracker to monitor tool calls and failures during task execution
@@ -211,7 +273,14 @@ export function createPlanActTestServer(webviewProvider?: WebviewProvider): http
 		req.on("end", async () => {
 			try {
 				// Parse the JSON body
-				const { task, apiKey, apiProvider = "gemini", waitSeconds = 10, resultsFilename } = JSON.parse(body)
+				const {
+					task,
+					apiKey,
+					apiProvider = "gemini",
+					waitSeconds = 10,
+					resultsFilename,
+					enableCheckpoints = false,
+				} = JSON.parse(body)
 
 				if (!task) {
 					res.writeHead(400)
@@ -274,36 +343,13 @@ export function createPlanActTestServer(webviewProvider?: WebviewProvider): http
 					// Clear any existing task
 					await visibleWebview.controller.clearTask()
 
-					// If API key is provided, update the API configuration
+					// If API key is provided, run the full initial setup
 					if (apiKey) {
-						Logger.log("[PlanActTestServer] API key provided, updating API configuration")
-
-						// Get current API configuration
-						const { apiConfiguration } = await getAllExtensionState(visibleWebview.controller.context)
-
-						// Update API configuration with API key
-						// TODO: support LiteLLM as provider.
-						const updatedConfig = {
-							...apiConfiguration,
+						await setInitialConfig(visibleWebview.controller.context, {
+							apiKey,
 							apiProvider: apiProvider as ApiProvider,
-							geminiApiKey: apiKey,
-						}
-
-						// Store the API key securely
-						await storeSecret(visibleWebview.controller.context, "geminiApiKey", apiKey)
-
-						visibleWebview.controller.cacheService.setApiConfiguration(updatedConfig)
-
-						// Update cache service to use cline provider
-						const currentConfig = visibleWebview.controller.cacheService.getApiConfiguration()
-						visibleWebview.controller.cacheService.setApiConfiguration({
-							...currentConfig,
-							planModeApiProvider: apiProvider,
-							actModeApiProvider: apiProvider,
+							enableCheckpoints,
 						})
-
-						// Post state to webview to reflect changes
-						await visibleWebview.controller.postStateToWebview()
 					}
 
 					// Ensure we're in Plan mode before initiating the task
