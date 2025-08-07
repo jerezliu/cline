@@ -1,0 +1,8 @@
+LICENSE
+README.md
+setup.py
+cline.egg-info/PKG-INFO
+cline.egg-info/SOURCES.txt
+cline.egg-info/dependency_links.txt
+cline.egg-info/requires.txt
+cline.egg-info/top_level.txt
