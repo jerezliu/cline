@@ -4,7 +4,7 @@ dist-standalone
 node_modules
 tmp
 .vscode-test/
-*.vsix
+# *.vsix
 
 .DS_Store
 .idea
